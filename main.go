@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"log"
 )
 
 type Dependency struct {
@@ -42,16 +43,18 @@ func getPlugin(name string) (plugin *Plugin, err error) {
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 
-	//fmt.Println(string(body))
-
 	plugin = &Plugin{}
 	err = json.Unmarshal(body, plugin)
+	if err != nil {
+		log.Println("error when unmarshal:", string(body))
+	}
 	return
 }
 
-func printDependencies(pluginName string, dependencyMap map[string]string) {
+func collectDependencies(pluginName string, dependencyMap map[string]string) {
 	plugin, err := getPlugin(pluginName)
 	if err != nil {
+		log.Println("can't get the plugin by name:", pluginName)
 		panic(err)
 	}
 
@@ -62,27 +65,45 @@ func printDependencies(pluginName string, dependencyMap map[string]string) {
 			dependencyMap[dependent.Name] = dependent.Version
 			fmt.Println(dependent.Name + "=" + dependent.Version)
 
-			printDependencies(dependent.Name, dependencyMap)
+			collectDependencies(dependent.Name, dependencyMap)
 		}
 	}
 }
 
+func print(dependencyMap map[string]string, f *os.File) {
+	for name, ver := range dependencyMap {
+		f.WriteString(name + "=" + ver + "\n")
+	}
+}
+
+type FlagArray []string
+
+func (i *FlagArray) String() string {
+	return "plugin name list"
+}
+
+func (i *FlagArray) Set(value string) error {
+	*i = append(*i, value)
+	return nil
+}
+
 func main() {
-	name := flag.String("name", "hugo", "Plugin Name")
+	var names FlagArray
+
+	flag.Var(&names, "names", "Plugin Name list")
 	out := flag.String("out", "", "outputfile")
-
 	flag.Parse()
-
-	dependencyMap := make(map[string]string)
-	printDependencies(*name, dependencyMap)
 
 	f, err := os.Create(*out)
 	if err != nil {
 		panic(err)
 	}
 
-	defer f.Close()
-	for name, ver := range dependencyMap {
-		f.WriteString(name + "=" + ver + "\n")
+	dependencyMap := make(map[string]string)
+	for _, name := range names {
+		collectDependencies(name, dependencyMap)
+		print(dependencyMap, f)
 	}
+
+	defer f.Close()
 }
